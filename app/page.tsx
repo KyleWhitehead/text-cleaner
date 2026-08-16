@@ -75,7 +75,7 @@ export default function Home() {
     }
 
     // Try 1-word correction
-    const corrected = correctWord(word, dictionary);
+    const corrected = correctWord(word, dictionary, word);
     if (corrected !== word) results.push(corrected);
 
     // Try 2-word splits
@@ -83,8 +83,8 @@ export default function Home() {
       const w1 = word.slice(0, i);
       const w2 = word.slice(i);
 
-      const c1 = correctWord(w1, dictionary);
-      const c2 = correctWord(w2, dictionary);
+      const c1 = correctWord(w1, dictionary, w1);
+      const c2 = correctWord(w2, dictionary, w2);
 
       if (dictionary.includes(c1) && dictionary.includes(c2)) {
         results.push(`${c1} ${c2}`);
@@ -98,9 +98,9 @@ export default function Home() {
         const w2 = word.slice(i, j);
         const w3 = word.slice(j);
 
-        const c1 = correctWord(w1, dictionary);
-        const c2 = correctWord(w2, dictionary);
-        const c3 = correctWord(w3, dictionary);
+        const c1 = correctWord(w1, dictionary, w1);
+        const c2 = correctWord(w2, dictionary, w2);
+        const c3 = correctWord(w3, dictionary, w3);
 
         if (
           dictionary.includes(c1) &&
@@ -116,10 +116,18 @@ export default function Home() {
   }
 
   // -----------------------------
-  // WORD CORRECTION
+  // WORD CORRECTION WITH PROPER NOUN DETECTION
   // -----------------------------
-  function correctWord(word: string, dictionary: string[]) {
+  function correctWord(word: string, dictionary: string[], originalWord?: string) {
     if (!word) return word;
+
+    // Check if word is already in dictionary (exact match)
+    if (dictionary.includes(word)) return word;
+
+    // Skip correction for proper nouns (capitalized words in original)
+    if (originalWord && originalWord[0] === originalWord[0].toUpperCase() && originalWord.length > 1) {
+      return word;
+    }
 
     let best = word;
     let bestScore = Infinity;
@@ -128,9 +136,13 @@ export default function Home() {
     for (const w of dictionary) {
       const dist = levenshtein(word, w);
       const soundMatch = soundex(w) === wordSoundex;
-      const score = soundMatch ? dist * 0.5 : dist;
+      
+      // Penalize single-letter differences more heavily (likely typos are worse)
+      const penalty = dist === 1 ? 1.5 : 1;
+      const score = soundMatch ? (dist * penalty) * 0.5 : dist * penalty;
 
-      if (score < bestScore && dist <= 3) {
+      // Be stricter: only correct if score is below 1.5 and distance is <= 2
+      if (score < bestScore && score < 1.5 && dist <= 2) {
         bestScore = score;
         best = w;
       }
@@ -176,6 +188,9 @@ export default function Home() {
     // CamelCase split
     cleaned = cleaned.replace(/([a-z])([A-Z])/g, "$1 $2");
 
+    // Store original words before lowercasing to preserve capitalization info
+    const originalWords = cleaned.split(/\s+/).filter((w) => w.length > 0);
+
     cleaned = cleaned.toLowerCase();
 
     // Split into words
@@ -184,8 +199,11 @@ export default function Home() {
     // Reconstruct mashed words
     words = words.flatMap((w) => reconstructWord(w, dictionary).split(" "));
 
-    // Correct each word
-    words = words.map((w) => correctWord(w, dictionary));
+    // Correct each word (pass original word to detect proper nouns)
+    words = words.map((w, i) => {
+      const origWord = originalWords[i] || w;
+      return correctWord(w, dictionary, origWord);
+    });
 
     // Rebuild punctuation
     let rebuilt = words.join(" ");
@@ -205,12 +223,12 @@ export default function Home() {
   // MAIN CLEANER
   // -----------------------------
   function cleanText(text: string, extraDict: string[] = []) {
-    // Mini dictionary
+    // Mini dictionary (expanded with common words and names)
     const baseDictionary = [
       "my", "name", "is", "hello", "world", "and",
-      "john", "johnny", "boy", "bobby", "bonnie", "clyde",
+      "john", "johnny", "boy", "bobby", "bob", "bonnie", "clyde",
       "this", "that", "you", "are", "cool", "awesome",
-      "was", "were", "love", "like"
+      "was", "were", "love", "like", "have", "has", "will", "would"
     ];
 
     const dictionary = [...baseDictionary, ...extraDict];
