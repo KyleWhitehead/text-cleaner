@@ -1,61 +1,160 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState } from "react";
 
 export default function Home() {
-  const FALLBACK_DICTIONARY = [
-    "my",
-    "name",
-    "is",
-    "bonnie",
-    "clyde",
-    "and",
-    "john",
-    "bobby",
-    "hello",
-    "world",
-    "test",
-    "this",
-    "that",
-    "you",
-    "are",
-    "good",
-    "bad",
-    "awesome",
-    "cool",
-  ];
+  const [input, setInput] = useState("");
+  const [output, setOutput] = useState("");
+  const [externalDict, setExternalDict] = useState<string[] | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
 
-  const [dictionary, setDictionary] = useState<string[]>(FALLBACK_DICTIONARY);
+  // -----------------------------
+  // SOUNDEx
+  // -----------------------------
+  function soundex(word: string) {
+    if (!word) return "";
+    const firstLetter = word[0].toUpperCase();
+    const map: Record<string, string> = {
+      a: "", e: "", i: "", o: "", u: "", y: "", h: "", w: "",
+      b: "1", f: "1", p: "1", v: "1",
+      c: "2", g: "2", j: "2", k: "2", q: "2", s: "2", x: "2", z: "2",
+      d: "3", t: "3",
+      l: "4",
+      m: "5", n: "5",
+      r: "6",
+    };
 
-  useEffect(() => {
-    async function load() {
-      try {
-        const res = await fetch("/api/dictionary");
-        if (!res.ok) return;
-        const data = await res.json();
-        if (Array.isArray(data)) setDictionary(data);
-      } catch (e) {
-        // keep fallback
+    let encoded = firstLetter;
+    let prev = map[word[0].toLowerCase()] || "";
+
+    for (let i = 1; i < word.length; i++) {
+      const char = word[i].toLowerCase();
+      const code = map[char] || "";
+      if (code !== prev) encoded += code;
+      if (code !== "") prev = code;
+    }
+
+    return encoded.padEnd(4, "0").slice(0, 4);
+  }
+
+  // -----------------------------
+  // LEVENSHTEIN
+  // -----------------------------
+  function levenshtein(a: string, b: string) {
+    const matrix = Array.from({ length: a.length + 1 }, () =>
+      Array(b.length + 1).fill(0)
+    );
+
+    for (let i = 0; i <= a.length; i++) matrix[i][0] = i;
+    for (let j = 0; j <= b.length; j++) matrix[0][j] = j;
+
+    for (let i = 1; i <= a.length; i++) {
+      for (let j = 1; j <= b.length; j++) {
+        const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j - 1] + cost
+        );
+      }
+    }
+    return matrix[a.length][b.length];
+  }
+
+  // -----------------------------
+  // MULTI-WORD RECONSTRUCTION
+  // -----------------------------
+  function reconstructWord(word: string, dictionary: string[]) {
+    if (word.length < 4) return word;
+
+    const results: string[] = [];
+
+    // Smart alphanumeric splitting
+    const alpha = word.replace(/[^a-z]/gi, "");
+    if (alpha.length >= 3 && alpha.length / word.length >= 0.6) {
+      word = alpha;
+    }
+
+    // Try 1-word correction
+    const corrected = correctWord(word, dictionary);
+    if (corrected !== word) results.push(corrected);
+
+    // Try 2-word splits
+    for (let i = 1; i < word.length; i++) {
+      const w1 = word.slice(0, i);
+      const w2 = word.slice(i);
+
+      const c1 = correctWord(w1, dictionary);
+      const c2 = correctWord(w2, dictionary);
+
+      if (dictionary.includes(c1) && dictionary.includes(c2)) {
+        results.push(`${c1} ${c2}`);
       }
     }
 
-    load();
-  }, []);
-  const [input, setInput] = useState("");
-  const [output, setOutput] = useState("");
+    // Try 3-word splits
+    for (let i = 1; i < word.length - 1; i++) {
+      for (let j = i + 1; j < word.length; j++) {
+        const w1 = word.slice(0, i);
+        const w2 = word.slice(i, j);
+        const w3 = word.slice(j);
 
-  function cleanText(text: string) {
-    let cleaned = text;
+        const c1 = correctWord(w1, dictionary);
+        const c2 = correctWord(w2, dictionary);
+        const c3 = correctWord(w3, dictionary);
 
-    // Remove hidden formatting characters
+        if (
+          dictionary.includes(c1) &&
+          dictionary.includes(c2) &&
+          dictionary.includes(c3)
+        ) {
+          results.push(`${c1} ${c2} ${c3}`);
+        }
+      }
+    }
+
+    return results.length ? results[0] : word;
+  }
+
+  // -----------------------------
+  // WORD CORRECTION
+  // -----------------------------
+  function correctWord(word: string, dictionary: string[]) {
+    if (!word) return word;
+
+    let best = word;
+    let bestScore = Infinity;
+    const wordSoundex = soundex(word);
+
+    for (const w of dictionary) {
+      const dist = levenshtein(word, w);
+      const soundMatch = soundex(w) === wordSoundex;
+      const score = soundMatch ? dist * 0.5 : dist;
+
+      if (score < bestScore && dist <= 3) {
+        bestScore = score;
+        best = w;
+      }
+    }
+
+    return best;
+  }
+
+  // -----------------------------
+  // CLEAN SINGLE SENTENCE
+  // -----------------------------
+  function cleanSentence(sentence: string, dictionary: string[]) {
+    let cleaned = sentence;
+
+    // Remove hidden chars
     cleaned = cleaned.replace(/[\u200B-\u200F\uFEFF\u00AD]/g, "");
 
     // Normalize quotes
-    cleaned = cleaned.replace(/[“”]/g, '"').replace(/[‘’]/g, "'");
+    cleaned = cleaned.replace(/[""]/g, '"').replace(/['']/g, "'");
 
-    // Remove HTML tags
+    // Remove HTML
     cleaned = cleaned.replace(/<[^>]*>/g, " ");
 
-    // Remove URLs + emails
+    // Remove URLs/emails
     cleaned = cleaned.replace(/https?:\/\/\S+/g, "");
     cleaned = cleaned.replace(/\S+@\S+\.\S+/g, "");
 
@@ -65,113 +164,95 @@ export default function Home() {
       ""
     );
 
-    // Fix broken paragraphs
-    cleaned = cleaned.replace(/\n{2,}/g, "\n");
+    // Extract and remove punctuation at the end
+    const punctMatch = cleaned.match(/[.!?]+$/);
+    const endPunct = punctMatch ? punctMatch[0] : ".";
+    cleaned = cleaned.replace(/[.!?]+$/, "");
 
-    // Remove extra spaces
+    // Fix spacing
     cleaned = cleaned.replace(/[ \t]+/g, " ");
-
-    // Add missing space after punctuation
     cleaned = cleaned.replace(/([.,!?])(?=\S)/g, "$1 ");
 
-    // Split camelCase / mashed words
+    // CamelCase split
     cleaned = cleaned.replace(/([a-z])([A-Z])/g, "$1 $2");
 
-    // Lowercase everything
     cleaned = cleaned.toLowerCase();
 
-    // --- DICTIONARY FOR SPELLING + SOUNDEX ---
-    const dictToUse = dictionary && dictionary.length ? dictionary : FALLBACK_DICTIONARY;
+    // Split into words
+    let words = cleaned.split(/\s+/).filter((w) => w.length > 0);
 
-    // --- SOUNDEX IMPLEMENTATION ---
-    function soundex(word: string) {
-      const firstLetter = word[0].toUpperCase();
-      const map: Record<string, string> = {
-        a: "", e: "", i: "", o: "", u: "", y: "", h: "", w: "",
-        b: "1", f: "1", p: "1", v: "1",
-        c: "2", g: "2", j: "2", k: "2", q: "2", s: "2", x: "2", z: "2",
-        d: "3", t: "3",
-        l: "4",
-        m: "5", n: "5",
-        r: "6"
-      };
+    // Reconstruct mashed words
+    words = words.flatMap((w) => reconstructWord(w, dictionary).split(" "));
 
-      let encoded = firstLetter;
-      let prev = map[word[0].toLowerCase()] || "";
+    // Correct each word
+    words = words.map((w) => correctWord(w, dictionary));
 
-      for (let i = 1; i < word.length; i++) {
-        const char = word[i].toLowerCase();
-        const code = map[char] || "";
+    // Rebuild punctuation
+    let rebuilt = words.join(" ");
+    rebuilt = rebuilt.replace(/\s+([.,!?])/g, "$1");
+    rebuilt = rebuilt.replace(/([.,!?])(?=\S)/g, "$1 ");
 
-        if (code !== prev) {
-          encoded += code;
-        }
-        if (code !== "") prev = code;
-      }
+    // Capitalize first letter of sentence
+    rebuilt = rebuilt.charAt(0).toUpperCase() + rebuilt.slice(1);
 
-      return encoded.padEnd(4, "0").slice(0, 4);
-    }
+    // Ensure sentence ends with proper punctuation
+    rebuilt = rebuilt.replace(/[.!?]*$/, endPunct);
 
-    // --- LEVENSHTEIN DISTANCE ---
-    function levenshtein(a: string, b: string) {
-      const matrix = Array.from({ length: a.length + 1 }, () =>
-        Array(b.length + 1).fill(0)
-      );
-
-      for (let i = 0; i <= a.length; i++) matrix[i][0] = i;
-      for (let j = 0; j <= b.length; j++) matrix[0][j] = j;
-
-      for (let i = 1; i <= a.length; i++) {
-        for (let j = 1; j <= b.length; j++) {
-          const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-          matrix[i][j] = Math.min(
-            matrix[i - 1][j] + 1,
-            matrix[i][j - 1] + 1,
-            matrix[i - 1][j - 1] + cost
-          );
-        }
-      }
-      return matrix[a.length][b.length];
-    }
-
-    // --- SPELL CORRECTION USING LEVENSHTEIN + SOUNDEX ---
-    function correctWord(word: string) {
-      let best = word;
-      let bestDist = Infinity;
-
-      const wordSoundex = soundex(word);
-
-      for (const w of dictToUse) {
-        const dist = levenshtein(word, w);
-        const soundMatch = soundex(w) === wordSoundex;
-
-        if (soundMatch || dist <= 2) {
-          if (dist < bestDist) {
-            bestDist = dist;
-            best = w;
-          }
-        }
-      }
-
-      return best;
-    }
-
-    cleaned = cleaned
-      .split(" ")
-      .map((w) => correctWord(w))
-      .join(" ");
-
-    // Capitalize sentences
-    cleaned = cleaned.replace(/(^\s*\w|[.!?]\s*\w)/g, (c) => c.toUpperCase());
-
-    // Remove extra blank lines again
-    cleaned = cleaned.replace(/\n{2,}/g, "\n");
-
-    return cleaned.trim();
+    return rebuilt.trim();
   }
 
-  function handleClean() {
-    setOutput(cleanText(input));
+  // -----------------------------
+  // MAIN CLEANER
+  // -----------------------------
+  function cleanText(text: string, extraDict: string[] = []) {
+    // Mini dictionary
+    const baseDictionary = [
+      "my", "name", "is", "hello", "world", "and",
+      "john", "johnny", "boy", "bobby", "bonnie", "clyde",
+      "this", "that", "you", "are", "cool", "awesome",
+      "was", "were", "love", "like"
+    ];
+
+    const dictionary = [...baseDictionary, ...extraDict];
+
+    // Split text into sentences while preserving punctuation
+    const sentences = text.match(/[^.!?]*[.!?]+/g) || [];
+    
+    // If no punctuation found, treat entire text as one sentence
+    if (sentences.length === 0) {
+      return cleanSentence(text, dictionary);
+    }
+
+    // Process each sentence independently and rejoin
+    const cleanedSentences = sentences.map((sentence) =>
+      cleanSentence(sentence, dictionary)
+    );
+
+    return cleanedSentences.join(" ");
+  }
+
+  // -----------------------------
+  // CLEAN BUTTON
+  // -----------------------------
+  async function handleClean() {
+    setIsLoading(true);
+
+    let extraDict: string[] = externalDict || [];
+
+    if (!externalDict) {
+      try {
+        const res = await fetch("/api/dictionary");
+        const data = await res.json();
+        extraDict = Array.isArray(data.words) ? data.words : [];
+        setExternalDict(extraDict);
+      } catch {
+        extraDict = [];
+      }
+    }
+
+    const result = cleanText(input, extraDict);
+    setOutput(result);
+    setIsLoading(false);
   }
 
   function handleReset() {
@@ -201,6 +282,7 @@ export default function Home() {
 
       <button
         onClick={handleClean}
+        disabled={isLoading}
         style={{
           padding: "0.75rem 1.5rem",
           fontSize: "1rem",
@@ -208,7 +290,7 @@ export default function Home() {
           marginBottom: "1rem",
         }}
       >
-        Clean Text
+        {isLoading ? "Cleaning..." : "Clean Text"}
       </button>
 
       <button
@@ -242,6 +324,9 @@ export default function Home() {
     </main>
   );
 }
+
+
+
 
 
 
