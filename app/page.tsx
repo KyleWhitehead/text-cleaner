@@ -1,7 +1,45 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 export default function Home() {
+  const FALLBACK_DICTIONARY = [
+    "my",
+    "name",
+    "is",
+    "bonnie",
+    "clyde",
+    "and",
+    "john",
+    "bobby",
+    "hello",
+    "world",
+    "test",
+    "this",
+    "that",
+    "you",
+    "are",
+    "good",
+    "bad",
+    "awesome",
+    "cool",
+  ];
+
+  const [dictionary, setDictionary] = useState<string[]>(FALLBACK_DICTIONARY);
+
+  useEffect(() => {
+    async function load() {
+      try {
+        const res = await fetch("/api/dictionary");
+        if (!res.ok) return;
+        const data = await res.json();
+        if (Array.isArray(data)) setDictionary(data);
+      } catch (e) {
+        // keep fallback
+      }
+    }
+
+    load();
+  }, []);
   const [input, setInput] = useState("");
   const [output, setOutput] = useState("");
 
@@ -43,12 +81,7 @@ export default function Home() {
     cleaned = cleaned.toLowerCase();
 
     // --- DICTIONARY FOR SPELLING + SOUNDEX ---
-    const dictionary = [
-      "my", "name", "is", "bonnie", "clyde", "and",
-      "john", "bobby",
-      "hello", "world", "test", "this", "that", "you",
-      "are", "good", "bad", "awesome", "cool"
-    ];
+    const dictToUse = dictionary && dictionary.length ? dictionary : FALLBACK_DICTIONARY;
 
     // --- SOUNDEX IMPLEMENTATION ---
     function soundex(word: string) {
@@ -108,7 +141,7 @@ export default function Home() {
 
       const wordSoundex = soundex(word);
 
-      for (const w of dictionary) {
+      for (const w of dictToUse) {
         const dist = levenshtein(word, w);
         const soundMatch = soundex(w) === wordSoundex;
 
