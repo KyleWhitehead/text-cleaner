@@ -39,3 +39,11 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Python
+python/.venv/
+__pycache__/
+.pytest_cache/
+
+# interview samples (real user text)
+samples/
